@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS academic_setup_carrera (
     nombre_carrera VARCHAR(255) NOT NULL,
     codigo_carrera VARCHAR(20) UNIQUE,
     horas_totales_curricula INTEGER,
-    unidad_id INTEGER NOT NULL REFERENCES academic_setup_unidadacademica(unidad_id) ON DELETE PROTECT,
+    unidad_id INTEGER NOT NULL REFERENCES academic_setup_unidadacademica(unidad_id) ON DELETE RESTRICT,
     CONSTRAINT unique_carrera_unidad UNIQUE (nombre_carrera, unidad_id)
 );
 
