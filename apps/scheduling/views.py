@@ -1,42 +1,47 @@
-# apps/scheduling/view.py
-from django.db import models # <--- AÑADE O ASEGÚRATE QUE ESTA LÍNEA EXISTA
-
-from rest_framework import viewsets, permissions, status
-from rest_framework.permissions import AllowAny
-from rest_framework.response import Response
-from rest_framework.decorators import action
-from django_filters.rest_framework import DjangoFilterBackend # Para filtrado avanzado
-from .models import Grupos, BloquesHorariosDefinicion, DisponibilidadDocentes, HorariosAsignados, ConfiguracionRestricciones
-from .tasks import generar_horarios_task # Importar la tarea Celery
-
-# Importar el servicio
-from .service.schedule_generator import ScheduleGeneratorService # Asegúrate que la ruta sea correcta (service o services)
+# apps/scheduling/views.py
 import logging
-logger = logging.getLogger(__name__)
-
-from .serializers import (
-    GruposSerializer, BloquesHorariosDefinicionSerializer, DisponibilidadDocentesSerializer,
-    HorariosAsignadosSerializer, ConfiguracionRestriccionesSerializer
-)
-# Importar servicios
-from .service.schedule_generator import ScheduleGeneratorService
-from .service.conflict_validator import ConflictValidatorService
-from apps.academic_setup.models import PeriodoAcademico # Para la acción de generar
-from .metrics import MetricsManager
-from .audit import AuditManager
-
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.parsers import MultiPartParser, FormParser
 import openpyxl
 from django.db import transaction
+from django.core.exceptions import ValidationError
+
+from rest_framework import viewsets, permissions, status
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.parsers import MultiPartParser, FormParser
+from django_filters.rest_framework import DjangoFilterBackend
+
+from .models import (
+    Grupos, BloquesHorariosDefinicion, DisponibilidadDocentes,
+    HorariosAsignados, ConfiguracionRestricciones
+)
+from .serializers import (
+    GruposSerializer, BloquesHorariosDefinicionSerializer,
+    DisponibilidadDocentesSerializer, HorariosAsignadosSerializer,
+    ConfiguracionRestriccionesSerializer
+)
+from .service.schedule_generator import ScheduleGeneratorService
+from .service.conflict_validator import ConflictValidatorService
+from .tasks import generar_horarios_task
+from .permissions import (
+    IsAdminOrReadOnly, CanGenerateSchedules, CanManageRestrictions
+)
+from .exceptions import (
+    ScheduleGenerationError, PeriodoNotFoundError,
+    InvalidExcelFormatError, ConflictError, GrupoNotFoundError
+)
+from .metrics import MetricsManager
+from .audit import AuditManager
+from apps.academic_setup.models import PeriodoAcademico
+
+logger = logging.getLogger('apps.scheduling')
 
 class GruposViewSet(viewsets.ModelViewSet):
     queryset = Grupos.objects.select_related(
         'carrera', 'periodo', 'docente_asignado_directamente'
     ).prefetch_related('materias').all()
     serializer_class = GruposSerializer
-    permission_classes = [permissions.AllowAny] # Temporalmente abierto para pruebas
+    permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['carrera', 'periodo', 'ciclo_semestral', 'turno_preferente']
 
@@ -56,8 +61,8 @@ class GruposViewSet(viewsets.ModelViewSet):
         return Response(response_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
     def update(self, request, *args, **kwargs):
-        print(f"[GruposViewSet] Actualizando grupo {kwargs.get('pk')}")
-        print(f"[GruposViewSet] Datos recibidos: {request.data}")
+        logger.debug(f"Actualizando grupo {kwargs.get('pk')}")
+        logger.debug(f"Datos recibidos: {request.data}")
         
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
@@ -88,36 +93,40 @@ class GruposViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        print(f"Iniciando generador de horarios para el grupo '{grupo.codigo_grupo}' en el período '{periodo_activo.nombre_periodo}'...")
+        logger.info(f"Iniciando generador de horarios para el grupo '{grupo.codigo_grupo}' en el período '{periodo_activo.nombre_periodo}'")
         
-        # Instanciar el servicio
-        generator = ScheduleGeneratorService(periodo=periodo_activo)
+        try:
+            # Instanciar el servicio
+            generator = ScheduleGeneratorService(periodo=periodo_activo)
 
-        # Llamar al nuevo método específico para un grupo
-        resultado = generator.generar_horario_para_grupo(grupo_id=grupo.grupo_id)
+            # Llamar al nuevo método específico para un grupo
+            resultado = generator.generar_horario_para_grupo(grupo_id=grupo.grupo_id)
 
-        if "error" in resultado:
-            return Response(resultado, status=status.HTTP_404_NOT_FOUND)
-        if "warning" in resultado:
-            return Response(resultado, status=status.HTTP_400_BAD_REQUEST)
+            if "error" in resultado:
+                raise GrupoNotFoundError(resultado.get("error", "Grupo no encontrado"))
+            if "warning" in resultado:
+                return Response(resultado, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(resultado, status=status.HTTP_200_OK)
+            return Response(resultado, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error al generar horario para grupo {grupo.grupo_id}: {str(e)}", exc_info=True)
+            raise ScheduleGenerationError(f"Error al generar horario: {str(e)}")
 
 
 class BloquesHorariosDefinicionViewSet(viewsets.ModelViewSet):
     queryset = BloquesHorariosDefinicion.objects.all()
     serializer_class = BloquesHorariosDefinicionSerializer
-    permission_classes = [permissions.AllowAny]
-    pagination_class = None # Deshabilitar paginación para este ViewSet
+    permission_classes = [IsAdminOrReadOnly]
+    pagination_class = None
 
 
 class DisponibilidadDocentesViewSet(viewsets.ModelViewSet):
     queryset = DisponibilidadDocentes.objects.select_related('docente', 'periodo', 'bloque_horario').all()
     serializer_class = DisponibilidadDocentesSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['docente', 'periodo']
-    pagination_class = None # Deshabilitar paginación para este ViewSet
+    pagination_class = None
 
 
 class HorariosAsignadosViewSet(viewsets.ModelViewSet):
@@ -125,7 +134,7 @@ class HorariosAsignadosViewSet(viewsets.ModelViewSet):
         'grupo__carrera', 'docente', 'espacio', 'periodo', 'bloque_horario', 'materia'
     ).all()
     serializer_class = HorariosAsignadosSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = {
         'periodo': ['exact'],
@@ -135,16 +144,17 @@ class HorariosAsignadosViewSet(viewsets.ModelViewSet):
         'dia_semana': ['exact'],
         'grupo__carrera': ['exact'],
     }
-    pagination_class = None # Deshabilitar paginación para validaciones en el frontend
+    pagination_class = None
 
 
 class ConfiguracionRestriccionesViewSet(viewsets.ModelViewSet):
     queryset = ConfiguracionRestricciones.objects.select_related('periodo_aplicable').all()
     serializer_class = ConfiguracionRestriccionesSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [CanManageRestrictions]
+
 
 class GeneracionHorarioView(viewsets.ViewSet):
-    permission_classes = [AllowAny] # Reemplaza AllowAny con un permiso adecuado
+    permission_classes = [CanGenerateSchedules]
     parser_classes = [MultiPartParser, FormParser]
 
     @action(detail=False, methods=['post'], url_path='generar-horario-automatico')
@@ -152,21 +162,23 @@ class GeneracionHorarioView(viewsets.ViewSet):
         periodo_id = request.data.get('periodo_id')
         if not periodo_id:
             logger.warning(f"Intento de generar horario sin periodo_id por usuario: {request.user.username if request.user.is_authenticated else 'Anónimo'}")
-            return Response({"error": "Se requiere el ID del período académico."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Se requiere el ID del período académico."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         try:
             periodo = PeriodoAcademico.objects.get(pk=periodo_id)
         except PeriodoAcademico.DoesNotExist:
-            logger.warning(f"Intento de generar horario para periodo_id no existente: {periodo_id} por usuario: {request.user.username if request.user.is_authenticated else 'Anónimo'}")
-            return Response({"error": "Período académico no encontrado."}, status=status.HTTP_404_NOT_FOUND)
+            logger.warning(f"Intento de generar horario para periodo_id no existente: {periodo_id}")
+            raise PeriodoNotFoundError(f"Período académico con ID {periodo_id} no encontrado.")
 
         logger.info(f"Iniciando generación SÍNCRONA para periodo_id: {periodo_id} (Solicitado por: {request.user.username if request.user.is_authenticated else 'Anónimo'})")
 
-        # Pasamos la instancia del logger de la vista al servicio
-        generator_service = ScheduleGeneratorService(periodo=periodo, stdout_ref=logger)
-
         try:
+            generator_service = ScheduleGeneratorService(periodo=periodo, stdout_ref=logger)
             resultado = generator_service.generar_horarios_automaticos()
+            
             logger.info(f"Generación SÍNCRONA para periodo_id: {periodo_id} completada. Stats: {resultado.get('stats')}")
             
             # Convertir conflictos no resueltos a formato serializable
@@ -187,9 +199,12 @@ class GeneracionHorarioView(viewsets.ViewSet):
                 "stats": resultado.get('stats', {}),
                 "unresolved_conflicts": unresolved_conflicts_serializable
             }, status=status.HTTP_200_OK)
+        except ValidationError as e:
+            logger.error(f"Error de validación en generación de horarios: {str(e)}")
+            raise InvalidExcelFormatError(f"Error de validación: {str(e)}")
         except Exception as e:
-            logger.error(f"Error catastrófico en generación síncrona de horario para periodo_id {periodo_id}: {str(e)}", exc_info=True)
-            return Response({"error": f"Ocurrió un error crítico durante la generación síncrona: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"Error inesperado en generación síncrona de horario para periodo_id {periodo_id}: {str(e)}", exc_info=True)
+            raise ScheduleGenerationError(f"Error al generar horarios: {str(e)}")
 
     @action(detail=False, methods=['get'], url_path='exportar-horarios-excel')
     def exportar_horarios(self, request):
@@ -209,71 +224,63 @@ class GeneracionHorarioView(viewsets.ViewSet):
         Aplica la regla: si hay al menos un '1' en cualquier bloque de un turno y día, todos los bloques de ese turno y día se marcan como disponibles; si todos están vacíos o 0, todos se marcan como no disponibles.
         Registra el id del usuario que subió el archivo si está autenticado.
         """
-        print("=== INICIO IMPORTAR DISPONIBILIDAD EXCEL ===")
-        print("Request data:", request.data)
-        print("Request FILES:", request.FILES)
-        print("Request user:", request.user)
+        logger.info("Iniciando importación de disponibilidad desde Excel")
+        logger.debug(f"Request data: {request.data}")
+        logger.debug(f"Request FILES: {request.FILES}")
+        logger.debug(f"Request user: {request.user}")
         
         file = request.FILES.get('file')
         periodo_id = request.data.get('periodo_id')
         docente_id = request.data.get('docente_id')
         usuario = request.user if request.user and request.user.is_authenticated else None
         
-        print("File:", file)
-        print("Periodo ID:", periodo_id)
-        print("Docente ID:", docente_id)
-        print("Usuario:", usuario)
+        logger.debug(f"File: {file}, Periodo ID: {periodo_id}, Docente ID: {docente_id}, Usuario: {usuario}")
         
         if not file or not periodo_id or not docente_id:
-            print("ERROR: Faltan datos requeridos")
-            print("File presente:", bool(file))
-            print("Periodo ID presente:", bool(periodo_id))
-            print("Docente ID presente:", bool(docente_id))
-            return Response({'error': 'Faltan datos requeridos (archivo, periodo_id, docente_id).'}, status=status.HTTP_400_BAD_REQUEST)
-        print("Archivo recibido:", file)
-        print("Nombre:", getattr(file, 'name', None))
-        print("Tamaño:", getattr(file, 'size', None))
-        print("Tipo:", getattr(file, 'content_type', None))
+            logger.warning(f"Faltan datos requeridos - File: {bool(file)}, Periodo: {bool(periodo_id)}, Docente: {bool(docente_id)}")
+            return Response(
+                {'error': 'Faltan datos requeridos (archivo, periodo_id, docente_id).'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        logger.debug(f"Archivo recibido - Nombre: {getattr(file, 'name', None)}, Tamaño: {getattr(file, 'size', None)}, Tipo: {getattr(file, 'content_type', None)}")
         
         try:
-            print("Intentando cargar workbook...")
+            logger.debug("Intentando cargar workbook...")
             wb = openpyxl.load_workbook(file)
-            print("Workbook cargado correctamente.")
+            logger.debug("Workbook cargado correctamente")
             ws = wb.active
-            print("Worksheet activo:", ws.title)
+            logger.debug(f"Worksheet activo: {ws.title}")
             rows = list(ws.iter_rows(values_only=True))
-            print("Total de filas leídas:", len(rows))
+            logger.debug(f"Total de filas leídas: {len(rows)}")
             
             if not rows:
-                print("ERROR: No hay filas en el archivo")
-                return Response({'error': 'El archivo Excel está vacío.'}, status=status.HTTP_400_BAD_REQUEST)
+                logger.error("El archivo Excel está vacío")
+                raise InvalidExcelFormatError('El archivo Excel está vacío.')
             
             headers = [str(h).strip() for h in rows[0]]
-            print("Encabezados detectados:", headers)
+            logger.debug(f"Encabezados detectados: {headers}")
             
             # Validar que existan los encabezados requeridos
             if 'Bloque horario' not in headers:
-                print("ERROR: No se encontró columna 'Bloque horario'")
-                return Response({'error': 'El archivo debe tener una columna llamada "Bloque horario".'}, status=status.HTTP_400_BAD_REQUEST)
+                logger.error("No se encontró columna 'Bloque horario'")
+                raise InvalidExcelFormatError('El archivo debe tener una columna llamada "Bloque horario".')
             
             if 'Turno' not in headers:
-                print("ERROR: No se encontró columna 'Turno'")
-                return Response({'error': 'El archivo debe tener una columna llamada "Turno".'}, status=status.HTTP_400_BAD_REQUEST)
+                logger.error("No se encontró columna 'Turno'")
+                raise InvalidExcelFormatError('El archivo debe tener una columna llamada "Turno".')
             
             idx_bloque = headers.index('Bloque horario')
             idx_turno = headers.index('Turno')
             dias_indices = [(i, headers[i]) for i in range(len(headers)) if headers[i] in ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado']]
             
-            print("Índice bloque:", idx_bloque)
-            print("Índice turno:", idx_turno)
-            print("Días encontrados:", dias_indices)
+            logger.debug(f"Índice bloque: {idx_bloque}, Índice turno: {idx_turno}, Días encontrados: {dias_indices}")
             
+        except InvalidExcelFormatError:
+            raise
         except Exception as e:
-            print("Error al leer el archivo Excel:", str(e))
-            import traceback
-            print("Traceback completo:")
-            traceback.print_exc()
-            return Response({'error': f'Error leyendo el archivo Excel: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+            logger.error(f"Error al leer el archivo Excel: {str(e)}", exc_info=True)
+            raise InvalidExcelFormatError(f'Error leyendo el archivo Excel: {str(e)}')
         # Construir estructura: {dia: {turno: [fila_index, ...]}}
         turnos = ['Mañana','Tarde','Noche']
         dias_map = {'Lunes':1,'Martes':2,'Miércoles':3,'Jueves':4,'Viernes':5,'Sábado':6}
@@ -331,14 +338,12 @@ class GeneracionHorarioView(viewsets.ViewSet):
                         'disponible': hay_disponible
                     })
         # Mapear bloque_hora, turno y día a bloque_horario_id
-        from .models import BloquesHorariosDefinicion
         bloques_db = BloquesHorariosDefinicion.objects.all()
         bloque_map = {}
         for b in bloques_db:
             clave = (str(b.hora_inicio), b.turno, b.dia_semana)
             bloque_map[clave] = b.bloque_def_id
         # Registrar en la base de datos
-        from .models import DisponibilidadDocentes
         with transaction.atomic():
             for disp in disponibilidad_final:
                 clave_bloque = (
@@ -359,9 +364,11 @@ class GeneracionHorarioView(viewsets.ViewSet):
                         'origen_carga': 'EXCEL'
                     }
                 )
-        print("=== FINALIZADO IMPORTAR DISPONIBILIDAD EXCEL ===")
-        print(f"Registros procesados: {len(disponibilidad_final)}")
-        return Response({'message': f'Se importaron {len(disponibilidad_final)} registros de disponibilidad.'}, status=status.HTTP_200_OK)
+        logger.info(f"Importación de disponibilidad completada. Registros procesados: {len(disponibilidad_final)}")
+        return Response(
+            {'message': f'Se importaron {len(disponibilidad_final)} registros de disponibilidad.'},
+            status=status.HTTP_200_OK
+        )
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])

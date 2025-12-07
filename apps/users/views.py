@@ -33,8 +33,7 @@ from django.db.models import Q
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all().order_by('-date_joined')
     serializer_class = UserSerializer
-    permission_classes = [AllowAny]   #Permite acceso sin autenticación
-    #ppermission_classes = [permissions.IsAdminUser] # Solo admins pueden listar/modificar todos los usuarios
+    permission_classes = [permissions.IsAdminUser]  # Solo admins pueden gestionar usuarios
 
     def get_serializer_class(self):
         if self.action in ['update', 'partial_update']:
@@ -65,14 +64,13 @@ class GroupViewSet(viewsets.ReadOnlyModelViewSet):
 class RolesViewSet(viewsets.ModelViewSet):
     queryset = Roles.objects.all()
     serializer_class = RolesSerializer
-    permission_classes = [AllowAny]   #Permite acceso sin autenticación
-    #permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated]
 
 class DocentesViewSet(viewsets.ModelViewSet):
     queryset = Docentes.objects.select_related('usuario', 'unidad_principal').prefetch_related('especialidades').all()
     serializer_class = DocentesSerializer
-    permission_classes = [AllowAny]   #Permite acceso sin autenticación
-    pagination_class = None # Deshabilitar paginación para este ViewSet
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
 
     def get_queryset(self):
         queryset = super().get_queryset()
