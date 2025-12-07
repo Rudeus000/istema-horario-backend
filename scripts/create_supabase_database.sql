@@ -38,6 +38,32 @@ SET client_encoding = 'UTF8';
 -- DROP TABLE IF EXISTS academic_setup_tipounidadacademica CASCADE;
 
 -- ============================================================================
+-- TABLAS DE DJANGO (AUTH) - Necesarias para las Foreign Keys
+-- ============================================================================
+-- Nota: Estas tablas se crean normalmente con 'python manage.py migrate'
+-- pero las creamos aquí para que las Foreign Keys funcionen correctamente
+
+-- Tabla: auth_user (tabla básica de usuarios de Django)
+-- Si ya existe (por migraciones de Django), se omitirá con IF NOT EXISTS
+CREATE TABLE IF NOT EXISTS auth_user (
+    id SERIAL PRIMARY KEY,
+    password VARCHAR(128) NOT NULL,
+    last_login TIMESTAMP WITH TIME ZONE,
+    is_superuser BOOLEAN NOT NULL DEFAULT FALSE,
+    username VARCHAR(150) NOT NULL UNIQUE,
+    first_name VARCHAR(150) NOT NULL DEFAULT '',
+    last_name VARCHAR(150) NOT NULL DEFAULT '',
+    email VARCHAR(254) NOT NULL DEFAULT '',
+    is_staff BOOLEAN NOT NULL DEFAULT FALSE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    date_joined TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Índices para auth_user
+CREATE INDEX IF NOT EXISTS idx_auth_user_username ON auth_user(username);
+CREATE INDEX IF NOT EXISTS idx_auth_user_email ON auth_user(email);
+
+-- ============================================================================
 -- MÓDULO 1: ACADEMIC SETUP
 -- ============================================================================
 
