@@ -105,6 +105,8 @@ DATABASES = {
         'OPTIONS': {
             'client_encoding': 'UTF8',
             'options': '-c client_encoding=utf8',
+            # SSL requerido para Supabase
+            'sslmode': 'require' if 'supabase.co' in config('DB_HOST', default='') else 'prefer',
         },
     }
 }
