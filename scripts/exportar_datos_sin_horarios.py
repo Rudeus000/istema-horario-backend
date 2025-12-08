@@ -18,6 +18,7 @@ django.setup()
 
 from django.core.management import call_command
 from django.conf import settings
+from django.db import connection
 from datetime import datetime
 
 def main():
@@ -51,12 +52,18 @@ def main():
     print("⏳ Esto puede tardar varios minutos...\n")
     
     try:
+        # Configurar encoding para la conexión a la base de datos
+        from django.db import connection
+        with connection.cursor() as cursor:
+            # Establecer encoding UTF-8 en la conexión
+            cursor.execute("SET client_encoding TO 'UTF8'")
+        
         # Usar stdout para capturar la salida y manejar encoding
         import io
         import sys
-        from io import StringIO
+        from io import StringIO, BytesIO
         
-        # Capturar stdout
+        # Capturar stdout como bytes primero
         old_stdout = sys.stdout
         sys.stdout = buffer = StringIO()
         
@@ -73,6 +80,29 @@ def main():
             # Obtener el contenido
             content = buffer.getvalue()
             
+        except UnicodeDecodeError as e:
+            # Si hay error de encoding, intentar con encoding diferente
+            print(f"\n⚠️  Advertencia: Error de encoding detectado, intentando con manejo de errores...")
+            # Reintentar con encoding más permisivo
+            from django.core.management import call_command
+            import subprocess
+            import json
+            
+            # Usar subprocess para capturar bytes directamente
+            result = subprocess.run(
+                ['python', 'manage.py', 'dumpdata', 
+                 '--natural-foreign', '--natural-primary', 
+                 '--exclude', 'scheduling.HorariosAsignados',
+                 '--indent', '2'],
+                capture_output=True,
+                text=False  # Capturar como bytes
+            )
+            
+            if result.returncode == 0:
+                # Decodificar con manejo de errores
+                content = result.stdout.decode('utf-8', errors='replace')
+            else:
+                raise Exception(f"Error en dumpdata: {result.stderr.decode('utf-8', errors='replace')}")
         finally:
             sys.stdout = old_stdout
         
