@@ -25,13 +25,13 @@ cd istema-horario-backend
 # DB_USER=postgres
 # DB_PASSWORD=tu_password_local
 
-# Exportar todos los datos
-python manage.py dumpdata --natural-foreign --natural-primary -o datos_local.json
+# Exportar todos los datos (EXCLUYENDO HorariosAsignados)
+python manage.py dumpdata --natural-foreign --natural-primary --exclude scheduling.HorariosAsignados -o datos_local.json
 
 # O exportar por app específica:
 python manage.py dumpdata academic_setup -o academic_setup.json
 python manage.py dumpdata users -o users.json
-python manage.py dumpdata scheduling -o scheduling.json
+python manage.py dumpdata scheduling --exclude scheduling.HorariosAsignados -o scheduling.json
 ```
 
 #### Paso 2: Cambiar configuración a Supabase
@@ -93,7 +93,8 @@ Debido a las Foreign Keys, importa en este orden:
 1. **auth** (usuarios del sistema)
 2. **academic_setup** (carreras, materias, etc.)
 3. **users** (docentes, roles)
-4. **scheduling** (horarios, disponibilidades)
+4. **scheduling** (disponibilidades, grupos, etc.)
+   - ⚠️ **NOTA**: `HorariosAsignados` NO se migra (excluido intencionalmente)
 
 ### 2. Conflictos de IDs
 
@@ -133,8 +134,8 @@ cd istema-horario-backend
 # 2. Configurar .env para LOCAL
 # Editar .env: DB_HOST=localhost, DB_PORT=5434
 
-# 3. Exportar datos
-python manage.py dumpdata --natural-foreign --natural-primary -o backup_completo.json
+# 3. Exportar datos (EXCLUYENDO HorariosAsignados)
+python manage.py dumpdata --natural-foreign --natural-primary --exclude scheduling.HorariosAsignados -o backup_completo.json
 
 # 4. Configurar .env para SUPABASE
 # Editar .env: DB_HOST=db.dhnbtnfpqhdtbzopfguw.supabase.co, DB_PORT=5432

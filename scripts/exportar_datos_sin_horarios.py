@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """
-Script rápido para exportar datos de la base de datos LOCAL.
+Script para exportar datos de la base de datos LOCAL EXCLUYENDO HorariosAsignados.
 
-Asegúrate de que tu .env esté configurado para la base de datos LOCAL antes de ejecutar.
+Este script exporta todos los datos excepto los horarios asignados.
 """
 
 import os
@@ -22,7 +22,7 @@ from datetime import datetime
 
 def main():
     print("\n" + "=" * 60)
-    print("  EXPORTANDO DATOS DE BASE DE DATOS LOCAL")
+    print("  EXPORTANDO DATOS (SIN HORARIOS ASIGNADOS)")
     print("=" * 60 + "\n")
     
     # Verificar configuración
@@ -40,15 +40,17 @@ def main():
             print("❌ Cancelado")
             return
     
+    print("\n⚠️  IMPORTANTE: Se EXCLUIRÁ la tabla 'HorariosAsignados' de la exportación")
+    print("   Se exportarán: carreras, materias, docentes, disponibilidades, grupos, etc.\n")
+    
     # Generar nombre de archivo con timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = f"backup_local_{timestamp}.json"
+    output_file = f"backup_sin_horarios_{timestamp}.json"
     
-    print(f"\n📦 Exportando a: {output_file}")
+    print(f"📦 Exportando a: {output_file}")
     print("⏳ Esto puede tardar varios minutos...\n")
     
     try:
-        # Excluir HorariosAsignados de la exportación
         call_command(
             'dumpdata',
             '--natural-foreign',
@@ -64,6 +66,7 @@ def main():
         print(f"\n✅ Exportación completada!")
         print(f"📁 Archivo: {output_file}")
         print(f"📊 Tamaño: {file_size:.2f} MB")
+        print(f"\n⚠️  NOTA: HorariosAsignados NO fue incluido en el backup")
         print(f"\n💡 Próximo paso: Configura .env para Supabase y ejecuta:")
         print(f"   python scripts/importar_datos_supabase.py --file {output_file}")
         

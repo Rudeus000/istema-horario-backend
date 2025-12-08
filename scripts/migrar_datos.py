@@ -54,12 +54,14 @@ def export_data(output_file="backup_datos.json"):
     
     try:
         # Exportar con opciones para manejar Foreign Keys
+        # Excluir HorariosAsignados de la exportación
         call_command(
             'dumpdata',
             '--natural-foreign',
             '--natural-primary',
             '--indent', '2',
             '--output', output_file,
+            '--exclude', 'scheduling.HorariosAsignados',
             verbosity=2
         )
         
