@@ -122,13 +122,12 @@ def main():
                     if result.returncode == 0:
                         content = result.stdout.decode('utf-8', errors='replace')
                         # Parsear JSON y agregar a la lista
-                        import json
                         try:
                             data = json.loads(content)
                             if isinstance(data, list):
                                 all_content.extend(data)
-                        except:
-                            pass
+                        except Exception as parse_error:
+                            print(f"   ⚠️  Error parseando JSON de {model}: {parse_error}")
                 except Exception as e:
                     print(f"   ⚠️  Error en {model}: {e}")
             
