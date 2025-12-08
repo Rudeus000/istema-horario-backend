@@ -52,61 +52,35 @@ def main():
     print("⏳ Esto puede tardar varios minutos...\n")
     
     try:
-        # Configurar encoding para la conexión a la base de datos
-        from django.db import connection
-        with connection.cursor() as cursor:
-            # Establecer encoding UTF-8 en la conexión
-            cursor.execute("SET client_encoding TO 'UTF8'")
+        # Usar subprocess para ejecutar dumpdata y capturar bytes directamente
+        # Esto evita problemas de encoding en la serialización de Django
+        import subprocess
+        import os
         
-        # Usar stdout para capturar la salida y manejar encoding
-        import io
-        import sys
-        from io import StringIO, BytesIO
+        print("📝 Ejecutando dumpdata con manejo de encoding...")
         
-        # Capturar stdout como bytes primero
-        old_stdout = sys.stdout
-        sys.stdout = buffer = StringIO()
+        # Ejecutar el comando como subprocess para capturar bytes
+        manage_py = str(BASE_DIR / 'manage.py')
+        result = subprocess.run(
+            [sys.executable, manage_py, 'dumpdata',
+             '--natural-foreign', '--natural-primary',
+             '--exclude', 'scheduling.HorariosAsignados',
+             '--indent', '2'],
+            capture_output=True,
+            text=False,  # Capturar como bytes
+            cwd=str(BASE_DIR),
+            env=os.environ.copy()
+        )
         
-        try:
-            call_command(
-                'dumpdata',
-                '--natural-foreign',
-                '--natural-primary',
-                '--indent', '2',
-                '--exclude', 'scheduling.HorariosAsignados',
-                verbosity=2
-            )
-            
-            # Obtener el contenido
-            content = buffer.getvalue()
-            
-        except UnicodeDecodeError as e:
-            # Si hay error de encoding, intentar con encoding diferente
-            print(f"\n⚠️  Advertencia: Error de encoding detectado, intentando con manejo de errores...")
-            # Reintentar con encoding más permisivo
-            from django.core.management import call_command
-            import subprocess
-            import json
-            
-            # Usar subprocess para capturar bytes directamente
-            result = subprocess.run(
-                ['python', 'manage.py', 'dumpdata', 
-                 '--natural-foreign', '--natural-primary', 
-                 '--exclude', 'scheduling.HorariosAsignados',
-                 '--indent', '2'],
-                capture_output=True,
-                text=False  # Capturar como bytes
-            )
-            
-            if result.returncode == 0:
-                # Decodificar con manejo de errores
-                content = result.stdout.decode('utf-8', errors='replace')
-            else:
-                raise Exception(f"Error en dumpdata: {result.stderr.decode('utf-8', errors='replace')}")
-        finally:
-            sys.stdout = old_stdout
+        if result.returncode != 0:
+            error_msg = result.stderr.decode('utf-8', errors='replace')
+            raise Exception(f"Error en dumpdata: {error_msg}")
         
-        # Escribir el archivo con encoding UTF-8 y manejo de errores
+        # Decodificar con manejo de errores (reemplaza caracteres inválidos)
+        print("🔧 Decodificando datos con manejo de encoding...")
+        content = result.stdout.decode('utf-8', errors='replace')
+        
+        # Escribir el archivo con encoding UTF-8
         with open(output_file, 'w', encoding='utf-8', errors='replace') as f:
             f.write(content)
         
