@@ -55,15 +55,29 @@ def export_data(output_file="backup_datos.json"):
     try:
         # Exportar con opciones para manejar Foreign Keys
         # Excluir HorariosAsignados de la exportación
-        call_command(
-            'dumpdata',
-            '--natural-foreign',
-            '--natural-primary',
-            '--indent', '2',
-            '--output', output_file,
-            '--exclude', 'scheduling.HorariosAsignados',
-            verbosity=2
-        )
+        # Usar stdout para capturar y manejar encoding
+        import sys
+        from io import StringIO
+        
+        old_stdout = sys.stdout
+        sys.stdout = buffer = StringIO()
+        
+        try:
+            call_command(
+                'dumpdata',
+                '--natural-foreign',
+                '--natural-primary',
+                '--indent', '2',
+                '--exclude', 'scheduling.HorariosAsignados',
+                verbosity=2
+            )
+            content = buffer.getvalue()
+        finally:
+            sys.stdout = old_stdout
+        
+        # Escribir con encoding UTF-8 y manejo de errores
+        with open(output_file, 'w', encoding='utf-8', errors='replace') as f:
+            f.write(content)
         
         # Verificar tamaño del archivo
         file_size = Path(output_file).stat().st_size / (1024 * 1024)  # MB
