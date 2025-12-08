@@ -32,12 +32,9 @@ CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/0
 CORS_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://localhost:8080
 "@
 
-$envPath = Join-Path $PSScriptRoot ".." ".env"
-$envPath = Resolve-Path $envPath -ErrorAction SilentlyContinue
-
-if (-not $envPath) {
-    $envPath = Join-Path (Split-Path $PSScriptRoot -Parent) ".env"
-}
+# Obtener el directorio raíz del proyecto (un nivel arriba de scripts)
+$projectRoot = Split-Path $PSScriptRoot -Parent
+$envPath = Join-Path $projectRoot ".env"
 
 $envContent | Out-File -FilePath $envPath -Encoding utf8 -NoNewline
 
