@@ -206,3 +206,4 @@ ORDER BY table_name, column_name;
 -- FIN DEL SCRIPT DE VERIFICACIÓN
 -- ============================================================================
 
+
