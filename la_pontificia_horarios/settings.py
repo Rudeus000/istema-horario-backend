@@ -14,6 +14,9 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 import os
 from pathlib import Path
 from datetime import timedelta # Para JWT
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -28,12 +31,13 @@ SECRET_KEY = 'django-insecure-3d4np#(eh956^!$%0@0snz-ksri4=1y(wx^gwiu-i@)l!_7x6#
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne', # First position required for Daphne
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -47,6 +51,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'django_filters',
+    'channels', # Channels support
     'apps.users',
     'apps.academic_setup',
     'apps.scheduling',
@@ -82,22 +87,21 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'la_pontificia_horarios.wsgi.application'
-
+ASGI_APPLICATION = 'la_pontificia_horarios.asgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DB_NAME', 'sistemaponti'),
+        'ENGINE': os.environ.get('DB_ENGINE', 'django.db.backends.postgresql'),
+        'NAME': os.environ.get('DB_NAME', 'postgres'),
         'USER': os.environ.get('DB_USER', 'postgres'),
         'PASSWORD': os.environ.get('DB_PASSWORD', 'root'),
-        'HOST': os.environ.get('DB_HOST', 'localhost'), # o la IP de tu servidor PostgreSQL
+        'HOST': os.environ.get('DB_HOST', 'localhost'),
         'PORT': os.environ.get('DB_PORT', '5432'),
         'OPTIONS': {
-            'client_encoding': 'UTF8',
-            'options': '-c client_encoding=utf8',
+            'sslmode': 'require',
         },
     }
 }
@@ -126,6 +130,16 @@ AUTH_PASSWORD_VALIDATORS = [
 # CELERY SETTINGS
 CELERY_BROKER_URL = 'memory://'  # Usar memoria en lugar de Redis
 CELERY_RESULT_BACKEND = 'rpc://'
+
+# CHANNELS CONFIGURATION
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            "hosts": [('127.0.0.1', 6379)],
+        },
+    },
+}
 
 # CACHE SETTINGS (para métricas y auditoría)
 CACHES = {
@@ -161,7 +175,15 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated', # Acceso por defecto requiere autenticación
     ),
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 10
+    'PAGE_SIZE': 10,
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle'
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/day',
+        'user': '1000/day'
+    }
 }
 
 # Simple JWT settings
@@ -198,31 +220,29 @@ SIMPLE_JWT = {
 # Opcional: Descomenta CORS_ALLOW_ALL_ORIGINS = True para pruebas rápidas, pero úsalo con precaución en producción.
 # CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:8080",  # <--- Asumiendo que tu frontend Vite se ejecuta en este puerto
-    "http://127.0.0.1:8080",  # <--- Para acceso vía IP local
-    # Si tu frontend se ejecuta en otros puertos o IPs, añádelos aquí:
-    # "http://localhost:3000",
-    # "http://192.168.18.30:5173",
-    # "http://192.168.18.30:3000",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://localhost:5173",
+    "http://localhost:3000",
 ]
 CORS_ALLOW_CREDENTIALS = True
 
 # Configuración de Redis Cache
-CACHES = {
-    'default': {
-        'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': 'redis://127.0.0.1:6379/1',
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-        }
-    }
-}
+# CACHES = {
+#     'default': {
+#         'BACKEND': 'django_redis.cache.RedisCache',
+#         'LOCATION': 'redis://127.0.0.1:6379/1',
+#         'OPTIONS': {
+#             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+#         }
+#     }
+# }
 
 # Usar Redis como backend de sesiones
-SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
-SESSION_CACHE_ALIAS = 'default'
+# SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+# SESSION_CACHE_ALIAS = 'default'
 
 # Configuración de Celery con Redis
-CELERY_BROKER_URL = 'redis://127.0.0.1:6379/0'
-CELERY_RESULT_BACKEND = 'redis://127.0.0.1:6379/0'
-CELERY_CACHE_BACKEND = 'redis://127.0.0.1:6379/1'
+# CELERY_BROKER_URL = 'redis://127.0.0.1:6379/0'
+# CELERY_RESULT_BACKEND = 'redis://127.0.0.1:6379/0'
+# CELERY_CACHE_BACKEND = 'redis://127.0.0.1:6379/1'

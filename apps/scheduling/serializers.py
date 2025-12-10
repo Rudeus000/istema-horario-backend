@@ -106,13 +106,13 @@ class HorariosAsignadosSerializer(serializers.ModelSerializer):
     class Meta:
         model = HorariosAsignados
         fields = [
-            'horario_id', 'grupo', 'materia', 'docente', 'espacio', 'periodo', 
-            'dia_semana', 'bloque_horario', 'estado', 'observaciones',
+            'grupo', 'materia', 'docente', 'espacio', 'periodo', 
+            'dia_semana', 'bloque_horario', 'estado', 'observaciones', 'updated_at',
             # Campos de solo lectura
             'grupo_detalle', 'docente_detalle', 'espacio_detalle', 
             'materia_detalle', 'bloque_horario_detalle'
         ]
-        read_only_fields = ['estado'] # El estado se maneja internamente
+        read_only_fields = ['estado', 'updated_at'] # El estado se maneja internamente
 
     def create(self, validated_data):
         # El estado se puede definir por defecto aquí si es necesario

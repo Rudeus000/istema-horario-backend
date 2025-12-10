@@ -3,6 +3,7 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
+
 from .models import (
     UnidadAcademica, Carrera, PeriodoAcademico, TiposEspacio, EspaciosFisicos,
     Especialidades, Materias, CarreraMaterias, MateriaEspecialidadesRequeridas,
@@ -12,6 +13,22 @@ from .models import (
 from apps.scheduling.models import Grupos
 from apps.scheduling.serializers import GruposSerializer
 from apps.scheduling.service.schedule_generator import ScheduleGeneratorService
+from .services.bulk_import import BulkImportService
+from .tasks import process_bulk_import_task
+from rest_framework.parsers import MultiPartParser, FormParser
+import os
+from django.conf import settings
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
+import uuid
+
+def save_temp_file(file):
+    # Save file to a temp location accessible by workers
+    ext = os.path.splitext(file.name)[1]
+    filename = f"temp_imports/{uuid.uuid4()}{ext}"
+    path = default_storage.save(filename, ContentFile(file.read()))
+    return default_storage.path(path)
+
 
 from .serializers import (
     UnidadAcademicaSerializer, CarreraSerializer, PeriodoAcademicoSerializer,
@@ -177,6 +194,21 @@ class CarreraViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['unidad']
 
+
+
+    @action(detail=False, methods=['post'], url_path='cargar-excel', parser_classes=[MultiPartParser, FormParser])
+    def cargar_excel(self, request):
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            file_path = save_temp_file(file)
+            task = process_bulk_import_task.delay(file_path, 'carreras', request.user.id if request.user.is_authenticated else None)
+            return Response({'message': 'Importación iniciada', 'task_id': task.id}, status=status.HTTP_202_ACCEPTED)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
     @action(detail=True, methods=['get'], url_path='materias')
     def materias(self, request, pk=None):
         """
@@ -290,15 +322,6 @@ class EspaciosFisicosViewSet(viewsets.ModelViewSet):
     serializer_class = EspaciosFisicosSerializer
     permission_classes = [AllowAny]
     pagination_class = EspaciosFisicosPagination
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        unidad_id = self.request.query_params.get('unidad_id')
-        tipo_espacio_id = self.request.query_params.get('tipo_espacio_id')
-        if unidad_id:
-            queryset = queryset.filter(unidad_id=unidad_id)
-        if tipo_espacio_id:
-            queryset = queryset.filter(tipo_espacio_id=tipo_espacio_id)
-        return queryset
 
 
 class EspecialidadesViewSet(viewsets.ModelViewSet):
@@ -309,44 +332,9 @@ class EspecialidadesViewSet(viewsets.ModelViewSet):
 class MateriasViewSet(viewsets.ModelViewSet):
     queryset = Materias.objects.all()
     serializer_class = MateriasSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['estado']
-
-    @action(detail=False, methods=['get'], url_path='por-carrera/(?P<carrera_id>[^/.]+)')
-    def por_carrera(self, request, carrera_id=None):
-        """
-        Endpoint para obtener materias filtradas por carrera
-        """
-        try:
-            carrera_id = int(carrera_id)
-            # Obtener las materias que pertenecen a la carrera específica
-            materias_ids = CarreraMaterias.objects.filter(
-                carrera_id=carrera_id
-            ).values_list('materia_id', flat=True)
-            
-            materias = Materias.objects.filter(
-                materia_id__in=materias_ids,
-                estado=True  # Solo materias activas
-            )
-            
-            serializer = self.get_serializer(materias, many=True)
-            return Response({
-                'carrera_id': carrera_id,
-                'materias': serializer.data,
-                'count': materias.count()
-            })
-            
-        except ValueError:
-            return Response(
-                {'error': 'ID de carrera inválido'}, 
-                status=400
-            )
-        except Exception as e:
-            return Response(
-                {'error': f'Error al obtener materias: {str(e)}'}, 
-                status=500
-            )
 
 class MateriaEspecialidadesRequeridasViewSet(viewsets.ModelViewSet):
     queryset = MateriaEspecialidadesRequeridas.objects.select_related('materia', 'especialidad').all()
