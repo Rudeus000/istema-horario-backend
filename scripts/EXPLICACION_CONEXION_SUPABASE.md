@@ -16,7 +16,7 @@ Supabase ofrece **DOS formas diferentes** de interactuar con la base de datos:
 - **Ejemplo**: Django usa `psycopg2` para conectarse directamente
 - **Esto es lo que Django necesita**
 
-## 🔑 ¿Por qué Django Necesita el Password?
+## 🔑 ¿Por qué Django Necesita el Password?o 
 
 Django **NO usa la API REST** de Supabase. Django se conecta **directamente a PostgreSQL** usando el driver `psycopg2`, igual que si fuera una base de datos local.
 

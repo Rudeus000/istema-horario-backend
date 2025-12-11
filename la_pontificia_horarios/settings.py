@@ -15,9 +15,38 @@ import os
 from pathlib import Path
 from datetime import timedelta # Para JWT
 from decouple import config, Csv
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Corregir archivo .env si tiene problemas de codificación
+def fix_env_encoding():
+    """Corrige problemas de codificación en .env antes de que decouple lo lea"""
+    env_path = BASE_DIR / '.env'
+    if env_path.exists():
+        try:
+            # Intentar leer con diferentes codificaciones
+            for encoding in ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252']:
+                try:
+                    with open(env_path, 'r', encoding=encoding) as f:
+                        content = f.read()
+                    # Si se leyó correctamente, verificar si necesita corrección
+                    if encoding != 'utf-8':
+                        # Re-guardar en UTF-8
+                        with open(env_path, 'w', encoding='utf-8', newline='\n') as f:
+                            f.write(content)
+                        logger.info(f"Archivo .env corregido desde {encoding} a UTF-8")
+                    break
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
+        except Exception as e:
+            logger.warning(f"No se pudo corregir .env: {e}")
+
+# Ejecutar corrección antes de importar configuraciones
+fix_env_encoding()
 
 # Crear directorio de logs si no existe
 LOGS_DIR = BASE_DIR / 'logs'
@@ -57,6 +86,7 @@ INSTALLED_APPS = [
     'apps.users',
     'apps.academic_setup',
     'apps.scheduling',
+    'chatbot',  # Chatbot del sistema
 ]
 
 MIDDLEWARE = [
@@ -94,12 +124,30 @@ WSGI_APPLICATION = 'la_pontificia_horarios.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+# Función para obtener password de forma segura con manejo de codificación
+def get_db_password():
+    """Obtiene la contraseña de la base de datos manejando posibles problemas de codificación."""
+    try:
+        password = config('DB_PASSWORD', default='')
+        # Asegurar que sea una cadena válida UTF-8
+        if isinstance(password, bytes):
+            password = password.decode('utf-8', errors='replace')
+        elif not isinstance(password, str):
+            password = str(password)
+        return password
+    except (UnicodeDecodeError, ValueError) as e:
+        # Si hay error de codificación, intentar leer directamente del archivo
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Error al leer DB_PASSWORD: {e}. Usando valor por defecto.")
+        return ''
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': config('DB_NAME', default='Sistemaponti'),
         'USER': config('DB_USER', default='postgres'),
-        'PASSWORD': config('DB_PASSWORD', default=''),
+        'PASSWORD': get_db_password(),
         'HOST': config('DB_HOST', default='localhost'),
         'PORT': config('DB_PORT', default='5434'),
         'OPTIONS': {
@@ -108,6 +156,7 @@ DATABASES = {
             # SSL requerido para Supabase
             'sslmode': 'require' if 'supabase.co' in config('DB_HOST', default='') else 'prefer',
         },
+        'CONN_MAX_AGE': 600,  # Mantener conexiones por 10 minutos
     }
 }
 
@@ -280,3 +329,7 @@ CORS_ALLOW_CREDENTIALS = True
 # Usar Redis como backend de sesiones
 SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
 SESSION_CACHE_ALIAS = 'default'
+
+# Google AI API Key para el chatbot
+GOOGLE_AI_API_KEY = config('GOOGLE_AI_API_KEY', default='')
+PERPLEXITY_API_KEY = config('PERPLEXITY_API_KEY', default='')

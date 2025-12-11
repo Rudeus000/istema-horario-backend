@@ -33,4 +33,7 @@ urlpatterns = [
     path('api/academic-setup/', include('apps.academic_setup.urls')),
     path('api/users/', include('apps.users.urls')),
     path('api/scheduling/', include('apps.scheduling.urls')),
+    
+    # Chatbot
+    path('api/chatbot/', include('chatbot.urls')),
 ]

@@ -48,15 +48,31 @@ def get_table_data(table_name, order_by=None):
     """Obtener todos los datos de una tabla"""
     db_config = settings.DATABASES['default']
     
-    # Conectar con encoding latin1 para leer datos corruptos, luego convertir a UTF-8
-    conn = psycopg2.connect(
-        host=db_config['HOST'],
-        port=db_config['PORT'],
-        database=db_config['NAME'],
-        user=db_config['USER'],
-        password=db_config['PASSWORD'],
-        client_encoding='LATIN1'  # Leer como latin1 primero
-    )
+    # Conectar y manejar encoding
+    # Guardar encoding original
+    original_encoding = os.environ.get('PGCLIENTENCODING', None)
+    try:
+        # Intentar establecer SQL_ASCII antes de conectar para evitar problemas
+        os.environ['PGCLIENTENCODING'] = 'SQL_ASCII'
+        conn = psycopg2.connect(
+            host=db_config['HOST'],
+            port=db_config['PORT'],
+            database=db_config['NAME'],
+            user=db_config['USER'],
+            password=db_config['PASSWORD'],
+            connect_timeout=10
+        )
+        # Establecer encoding después de conectar
+        try:
+            conn.set_client_encoding('LATIN1')
+        except:
+            conn.set_client_encoding('SQL_ASCII')
+    finally:
+        # Restaurar encoding original
+        if original_encoding:
+            os.environ['PGCLIENTENCODING'] = original_encoding
+        elif 'PGCLIENTENCODING' in os.environ:
+            del os.environ['PGCLIENTENCODING']
     
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -118,15 +134,31 @@ def get_many_to_many_data(table_name, fk1_col, fk2_col):
     """Obtener datos de tablas many-to-many"""
     db_config = settings.DATABASES['default']
     
-    # Conectar con encoding latin1 para leer datos corruptos, luego convertir a UTF-8
-    conn = psycopg2.connect(
-        host=db_config['HOST'],
-        port=db_config['PORT'],
-        database=db_config['NAME'],
-        user=db_config['USER'],
-        password=db_config['PASSWORD'],
-        client_encoding='LATIN1'  # Leer como latin1 primero
-    )
+    # Conectar y manejar encoding
+    # Guardar encoding original
+    original_encoding = os.environ.get('PGCLIENTENCODING', None)
+    try:
+        # Intentar establecer SQL_ASCII antes de conectar para evitar problemas
+        os.environ['PGCLIENTENCODING'] = 'SQL_ASCII'
+        conn = psycopg2.connect(
+            host=db_config['HOST'],
+            port=db_config['PORT'],
+            database=db_config['NAME'],
+            user=db_config['USER'],
+            password=db_config['PASSWORD'],
+            connect_timeout=10
+        )
+        # Establecer encoding después de conectar
+        try:
+            conn.set_client_encoding('LATIN1')
+        except:
+            conn.set_client_encoding('SQL_ASCII')
+    finally:
+        # Restaurar encoding original
+        if original_encoding:
+            os.environ['PGCLIENTENCODING'] = original_encoding
+        elif 'PGCLIENTENCODING' in os.environ:
+            del os.environ['PGCLIENTENCODING']
     
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:

@@ -35,3 +35,5 @@ virtualenv==20.30.0
 wcwidth==0.2.13
 openpyxl==3.1.2
 python-decouple==3.8
+google-generativeai==0.8.5
+requests==2.31.0
