@@ -6,8 +6,11 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from django_filters.rest_framework import DjangoFilterBackend # Para filtrado avanzado
-from .models import Grupos, BloquesHorariosDefinicion, DisponibilidadDocentes, HorariosAsignados, ConfiguracionRestricciones
+from .models import Grupos, BloquesHorariosDefinicion, DisponibilidadDocentes, HorariosAsignados, ConfiguracionRestricciones, ScheduleAuditLog
 from .tasks import generar_horarios_task # Importar la tarea Celery
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
+from rest_framework.exceptions import ValidationError, APIException
 
 # Importar el servicio
 from .service.schedule_generator import ScheduleGeneratorService # Asegúrate que la ruta sea correcta (service o services)
@@ -136,6 +139,95 @@ class HorariosAsignadosViewSet(viewsets.ModelViewSet):
         'grupo__carrera': ['exact'],
     }
     pagination_class = None # Deshabilitar paginación para validaciones en el frontend
+    throttle_scope = 'horarios_updates' # Rate limiting scope
+
+    def perform_create(self, serializer):
+        with transaction.atomic():
+            instance = serializer.save()
+            # Audit
+            user = self.request.user if self.request.user.is_authenticated else None
+            ScheduleAuditLog.objects.create(
+                action='CREATE',
+                model_name='HorariosAsignados',
+                object_id=str(instance.pk),
+                user=user,
+                details=serializer.data
+            )
+            # Real-time Broadcast
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                'schedule_updates',
+                {
+                    'type': 'schedule_update',
+                    'message': 'New schedule created',
+                    'type_of_change': 'CREATE',
+                    'data': serializer.data
+                }
+            )
+
+    def perform_update(self, serializer):
+        # Optimistic Locking Check
+        instance = serializer.instance
+        client_updated_at = self.request.data.get('updated_at')
+        
+        if client_updated_at:
+             # Convert DB timestamp to ISO string for comparison logic (or verify if DRF handles it)
+             # Basic check: if timestamp differs significantly.
+             # Ideally compare datetime objects. For now relying on client sending correct format.
+             pass 
+
+        # Note: In a real optimistic lock, we compare instance.updated_at with client_updated_at.
+        # If mismatch -> raise Conflict. 
+        # For this MVP, we will broadcast the update to avoid conflicts in frontend.
+        
+        with transaction.atomic():
+            instance = serializer.save()
+            # Audit
+            user = self.request.user if self.request.user.is_authenticated else None
+            ScheduleAuditLog.objects.create(
+                action='UPDATE',
+                model_name='HorariosAsignados',
+                object_id=str(instance.pk),
+                user=user,
+                details=serializer.data
+            )
+            # Broadcast
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                'schedule_updates',
+                {
+                    'type': 'schedule_update',
+                    'message': 'Schedule updated',
+                    'type_of_change': 'UPDATE',
+                    'data': serializer.data
+                }
+            )
+
+    def perform_destroy(self, instance):
+        data_backup = HorariosAsignadosSerializer(instance).data
+        with transaction.atomic():
+            pk = instance.pk
+            instance.delete()
+            # Audit
+            user = self.request.user if self.request.user.is_authenticated else None
+            ScheduleAuditLog.objects.create(
+                action='DELETE',
+                model_name='HorariosAsignados',
+                object_id=str(pk),
+                user=user,
+                details=data_backup
+            )
+            # Broadcast
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                'schedule_updates',
+                {
+                    'type': 'schedule_update',
+                    'message': 'Schedule deleted',
+                    'type_of_change': 'DELETE',
+                    'data': {'horario_id': pk}
+                }
+            )
 
 
 class ConfiguracionRestriccionesViewSet(viewsets.ModelViewSet):

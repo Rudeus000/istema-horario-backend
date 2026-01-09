@@ -1,15 +1,15 @@
-#apps/users/views.py
+# apps/users/views.py
 from django.contrib.auth.models import User, Group
 from rest_framework import viewsets, permissions, status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.decorators import action
-
-# Importaciones de rest_framework_simplejwt:
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView # <-- TokenObtainPairView sí se importa de views
+from rest_framework_simplejwt.views import TokenObtainPairView
 
 # Importaciones de tus modelos locales:
-from .models import Docentes, Roles, DocenteEspecialidades # Aquí sí importas Roles y DocenteEspecialidades
+from .models import Docentes, Roles, DocenteEspecialidades
+from apps.scheduling.models import HorariosAsignados, DisponibilidadDocentes
+from apps.academic_setup.models import MateriaEspecialidadesRequeridas
 
 # Importaciones de tus serializers locales:
 from .serializers import (
@@ -18,23 +18,28 @@ from .serializers import (
     DocentesSerializer,
     RolesSerializer,
     GroupSerializer,
-    CustomTokenObtainPairSerializer, # <-- ¡Este es el nombre correcto!
+    CustomTokenObtainPairSerializer,
     DocenteEspecialidadesSimpleSerializer,
-    UserUpdateSerializer, # <--- importar el nuevo serializer
+    UserUpdateSerializer,
 )
 
-# Importar modelos necesarios para el filtrado avanzado
-from apps.scheduling.models import HorariosAsignados, DisponibilidadDocentes
-from apps.academic_setup.models import MateriaEspecialidadesRequeridas
-from django.db.models import Q
+from apps.academic_setup.tasks import process_bulk_import_task
+from rest_framework.parsers import MultiPartParser, FormParser
+import os
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
+import uuid
 
-# from ..permissions import IsAdminOrSelf # Permiso personalizado
+def save_temp_file(file):
+    ext = os.path.splitext(file.name)[1]
+    filename = f"temp_imports/{uuid.uuid4()}{ext}"
+    path = default_storage.save(filename, ContentFile(file.read()))
+    return default_storage.path(path)
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all().order_by('-date_joined')
     serializer_class = UserSerializer
-    permission_classes = [AllowAny]   #Permite acceso sin autenticación
-    #ppermission_classes = [permissions.IsAdminUser] # Solo admins pueden listar/modificar todos los usuarios
+    permission_classes = [AllowAny]
 
     def get_serializer_class(self):
         if self.action in ['update', 'partial_update']:
@@ -48,7 +53,6 @@ class UserViewSet(viewsets.ModelViewSet):
         serializer = UserRegistrationSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
-            # Podrías retornar un token aquí también si quieres login inmediato
             return Response(UserSerializer(user).data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -65,26 +69,20 @@ class GroupViewSet(viewsets.ReadOnlyModelViewSet):
 class RolesViewSet(viewsets.ModelViewSet):
     queryset = Roles.objects.all()
     serializer_class = RolesSerializer
-    permission_classes = [AllowAny]   #Permite acceso sin autenticación
-    #permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [AllowAny]
 
 class DocentesViewSet(viewsets.ModelViewSet):
     queryset = Docentes.objects.select_related('usuario', 'unidad_principal').prefetch_related('especialidades').all()
     serializer_class = DocentesSerializer
-    permission_classes = [AllowAny]   #Permite acceso sin autenticación
-    pagination_class = None # Deshabilitar paginación para este ViewSet
+    permission_classes = [AllowAny]
+    pagination_class = None
 
     def get_queryset(self):
         queryset = super().get_queryset()
 
-        # Parámetros para filtrado simple
         unidad_id = self.request.query_params.get('unidad_id')
         especialidad_id = self.request.query_params.get('especialidad_id')
-
-        # Parámetros para filtrado por materia (cualificación)
         materia_id = self.request.query_params.get('materia_id')
-
-        # Parámetros para filtrado de disponibilidad
         periodo_id = self.request.query_params.get('periodo_id')
         dia_semana = self.request.query_params.get('dia_semana')
         bloque_id = self.request.query_params.get('bloque_id')
@@ -94,35 +92,26 @@ class DocentesViewSet(viewsets.ModelViewSet):
         if especialidad_id:
             queryset = queryset.filter(especialidades__especialidad_id=especialidad_id).distinct()
 
-        # --- Lógica de filtrado por cualificación de materia ---
         if materia_id:
             try:
-                # 1. Obtener las especialidades requeridas para la materia
                 especialidades_requeridas_ids = MateriaEspecialidadesRequeridas.objects.filter(
                     materia_id=materia_id
                 ).values_list('especialidad_id', flat=True)
 
-                # 2. Si hay especialidades requeridas, filtrar docentes que tengan al menos una de ellas
                 if especialidades_requeridas_ids.exists():
                     queryset = queryset.filter(
                         especialidades__especialidad_id__in=especialidades_requeridas_ids
                     ).distinct()
-                # Opcional: si la materia no requiere especialidad, no se filtra y se devuelven todos.
-                # Si se quisiera que no devuelva ninguno, se añadiría: else: return queryset.none()
             except (ValueError, TypeError):
-                # Ignorar si el materia_id no es válido
                 pass
 
-        # --- Lógica de filtrado avanzado para disponibilidad ---
         if periodo_id and dia_semana and bloque_id:
-            # 1. Docentes que YA tienen una clase asignada en ese bloque
             docentes_ocupados = HorariosAsignados.objects.filter(
                 periodo_id=periodo_id,
                 dia_semana=dia_semana,
                 bloque_horario_id=bloque_id
             ).values_list('docente_id', flat=True)
 
-            # 2. Docentes que SÍ han registrado disponibilidad para ese bloque
             docentes_con_disponibilidad = DisponibilidadDocentes.objects.filter(
                 periodo_id=periodo_id,
                 dia_semana=dia_semana,
@@ -130,7 +119,6 @@ class DocentesViewSet(viewsets.ModelViewSet):
                 esta_disponible=True
             ).values_list('docente_id', flat=True)
             
-            # Aplicar filtros al queryset
             queryset = queryset.filter(
                 docente_id__in=docentes_con_disponibilidad
             ).exclude(
@@ -139,10 +127,21 @@ class DocentesViewSet(viewsets.ModelViewSet):
 
         return queryset
 
-# Para login y refresh de tokens
+    @action(detail=False, methods=['post'], url_path='cargar-excel', parser_classes=[MultiPartParser, FormParser])
+    def cargar_excel(self, request):
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            file_path = save_temp_file(file)
+            task = process_bulk_import_task.delay(file_path, 'docentes', request.user.id if request.user.is_authenticated else None)
+            return Response({'message': 'Importación iniciada', 'task_id': task.id}, status=status.HTTP_202_ACCEPTED)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
-    pass
 
 class DocenteEspecialidadesViewSet(viewsets.ModelViewSet):
     queryset = DocenteEspecialidades.objects.all()

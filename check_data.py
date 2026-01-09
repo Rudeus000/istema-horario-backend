@@ -11,7 +11,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'la_pontificia_horarios.settings
 django.setup()
 
 from apps.academic_setup.models import UnidadAcademica, Carrera, PeriodoAcademico, Materias
-from apps.scheduling.models import Grupos, BloquesHorariosDefinicion
+from apps.scheduling.models import Grupos, BloquesHorariosDefinicion, HorariosAsignados
 from apps.users.models import Docentes
 
 def check_data():
@@ -58,6 +58,13 @@ def check_data():
     print(f"\nDocentes: {docentes.count()}")
     for docente in docentes[:5]:
         print(f"  - {docente.docente_id}: {docente.nombres} {docente.apellidos}")
+
+    # Verificar Horarios Asignados
+    horarios = HorariosAsignados.objects.all()
+    print(f"\nHorarios Asignados: {horarios.count()}")
+    for horario in horarios[:5]:
+        print(f"  - {horario.horario_id}: {horario.grupo.codigo_grupo} - {horario.materia.nombre_materia if horario.materia else 'Sin Materia'} (Updated: {horario.updated_at})")
+
 
 if __name__ == "__main__":
     check_data() 

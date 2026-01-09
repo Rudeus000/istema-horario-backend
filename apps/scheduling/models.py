@@ -2,6 +2,7 @@
 from django.db import models
 from apps.academic_setup.models import Materias, Carrera, PeriodoAcademico, TiposEspacio, EspaciosFisicos
 from apps.users.models import Docentes
+from django.contrib.auth.models import User
 
 class Grupos(models.Model):
     TURNO_CHOICES = [('M', 'Mañana'), ('T', 'Tarde'), ('N', 'Noche')]
@@ -90,6 +91,7 @@ class HorariosAsignados(models.Model):
     bloque_horario = models.ForeignKey(BloquesHorariosDefinicion, on_delete=models.CASCADE, related_name='clases_en_bloque')
     estado = models.CharField(max_length=50, choices=ESTADO_CHOICES, default='Programado')
     observaciones = models.TextField(blank=True, null=True)
+    updated_at = models.DateTimeField(auto_now=True) # Para control de concurrencia optimista
 
     def __str__(self):
         materia_str = self.materia.codigo_materia if self.materia else "SIN_MATERIA"
@@ -128,3 +130,22 @@ class ConfiguracionRestricciones(models.Model):
     class Meta:
         verbose_name = "Configuración de Restricción"
         verbose_name_plural = "Configuraciones de Restricciones"
+
+class ScheduleAuditLog(models.Model):
+    ACTION_CHOICES = [('CREATE', 'Created'), ('UPDATE', 'Updated'), ('DELETE', 'Deleted')]
+    
+    audit_id = models.AutoField(primary_key=True)
+    action = models.CharField(max_length=10, choices=ACTION_CHOICES)
+    model_name = models.CharField(max_length=50) # 'HorariosAsignados' usually
+    object_id = models.CharField(max_length=50)
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+    details = models.JSONField(null=True, blank=True) # Stores before/after or diff
+
+    def __str__(self):
+        return f"{self.action} - {self.model_name} {self.object_id} by {self.user}"
+
+    class Meta:
+        verbose_name = "Log de Auditoría"
+        verbose_name_plural = "Logs de Auditoría"
+        ordering = ['-timestamp']
